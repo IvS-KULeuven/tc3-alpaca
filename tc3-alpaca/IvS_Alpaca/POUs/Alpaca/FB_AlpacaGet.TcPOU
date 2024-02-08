@@ -1,0 +1,283 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="FB_AlpacaGet" Id="{e750c028-408f-48d9-9d08-604be5efe10f}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_AlpacaGet
+VAR_INPUT
+END_VAR
+VAR_OUTPUT
+	bBusy               : BOOL;
+	bError              : BOOL;
+    eStatusCode         : E_AlpacaStatusCode;
+END_VAR
+VAR_IN_OUT
+    fbClient            : FB_IotHttpClient;
+END_VAR
+VAR
+    sUri                : STRING;
+    fbRequest           : FB_IotHttpRequest;
+	fbJson              : FB_JsonDomParser;
+    nState              : UINT;
+	jsonDoc             : SJsonValue;
+    jsonVal             : SJsonValue;
+	bGetContentResult	: BOOL;
+	sContent			: STRING(511);
+    tSent               : TIME;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// small state machine:
+CASE nState OF 
+    0:
+        // send the request
+        IF fbRequest.SendRequest(
+                sUri            := sUri,
+                fbClient        := fbClient,
+                eRequestType    := ETcIotHttpRequestType.HTTP_GET,
+                pContent        := 0,
+                nContentSize    := 0, 
+                fbHeader        := 0) THEN
+            nState      := 1;
+            bBusy       := TRUE;
+            bError      := FALSE;
+            eStatusCode := E_AlpacaStatusCode.OK; 
+            tSent       := TIME();
+        END_IF
+    1:
+        // wait for the response
+        IF NOT fbRequest.bBusy THEN
+            bGetContentResult:= fbRequest.GetContent(
+                pContent            := ADR(sContent),
+                nContentSize        := SIZEOF(sContent),
+                bSetNullTermination := TRUE);
+            
+			IF fbRequest.nStatusCode >= 200 AND fbRequest.nStatusCode < 300 THEN
+				jsonDoc := fbRequest.GetJsonDomContent(fbJson);
+				IF jsonDoc <> 0 THEN
+                    eStatusCode := E_AlpacaStatusCode.OK; 
+					bError:= FALSE;
+                ELSE
+                    bError := TRUE;
+                    eStatusCode := E_AlpacaStatusCode.ERROR_WRONG_RESPONSE_CONTENT; 
+				END_IF
+            ELSE
+                bError := TRUE;
+                eStatusCode := E_AlpacaStatusCode.ERROR_WRONG_HTTP_STATUS_CODE; 
+			END_IF
+                
+            nState:= 0;
+		    bBusy:= FALSE;
+		END_IF
+END_CASE]]></ST>
+    </Implementation>
+    <Method Name="FB_init" Id="{06ea3e7b-89dd-45d3-a15c-fd165c58c558}">
+      <Declaration><![CDATA[METHOD FB_init : BOOL
+VAR_INPUT
+	bInitRetains : BOOL; // if TRUE, the retain variables are initialized (warm start / cold start)
+	bInCopyCode : BOOL;  // if TRUE, the instance afterwards gets moved into the copy code (online change)
+    sDeviceName     : STRING;
+    nDeviceNumber   : UINT;
+    sVariableName   : STRING;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[sUri := F_AlpacaFormatUri(sDeviceName, nDeviceNumber, sVariableName);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_FetchResultBool" Id="{5aaed2ba-71d6-44e8-aa2b-2982596597d8}">
+      <Declaration><![CDATA[METHOD M_FetchResultBool : BOOL
+VAR_INPUT
+END_VAR
+VAR_IN_OUT
+    stData : ST_AlpacaGetBool;
+END_VAR
+VAR
+    nTmpInt : DINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF fbJson.HasMember(jsonDoc, 'Value') THEN
+    jsonVal:= fbJson.FindMember(jsonDoc, 'Value');
+    IF fbJson.IsBool(jsonVal) THEN
+        stData.bValue      := fbJson.GetBool(jsonVal);
+        stData.eStatusCode := E_AlpacaStatusCode.OK;
+        stData.rAge       := TIME_TO_REAL(TIME() - tSent);
+    ELSIF fbJson.IsInt(jsonVal) THEN
+        nTmpInt := fbJson.GetInt(jsonVal);
+        IF nTmpInt = 0 THEN
+            stData.bValue := FALSE;
+            stData.eStatusCode := E_AlpacaStatusCode.OK;
+            stData.rAge       := TIME_TO_REAL(TIME() - tSent);
+        ELSIF nTmpInt = 1 THEN
+            stData.bValue := TRUE;
+            stData.eStatusCode := E_AlpacaStatusCode.OK;
+            stData.rAge       := TIME_TO_REAL(TIME() - tSent);
+        ELSE
+            stData.bValue      := FALSE;
+            stData.eStatusCode := E_AlpacaStatusCode.ERROR_WRONG_CONVERSION;
+		END_IF
+    ELSE
+        stData.bValue      := FALSE;
+        stData.eStatusCode := E_AlpacaStatusCode.ERROR_WRONG_CONVERSION;
+	END_IF
+ELSE
+    stData.bValue      := FALSE;
+    stData.eStatusCode := E_AlpacaStatusCode.ERROR_WRONG_RESPONSE_MEMBER;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_FetchResultCoverState" Id="{01cb43d9-33fd-457a-8d74-f9ecf2ae8394}">
+      <Declaration><![CDATA[METHOD M_FetchResultCoverState : BOOL
+VAR_INPUT
+END_VAR
+VAR_IN_OUT
+    stData : ST_AlpacaGetCoverState;
+END_VAR
+VAR
+    nTmpInt : DINT;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF fbJson.HasMember(jsonDoc, 'Value') THEN
+    jsonVal:= fbJson.FindMember(jsonDoc, 'Value');
+    IF fbJson.IsInt(jsonVal) THEN
+        stData.nValue       := fbJson.GetInt(jsonVal);
+        stData.eValue       := stData.nValue;
+        stData.sValue       := TO_STRING(stData.eValue);
+        stData.eStatusCode  := E_AlpacaStatusCode.OK;
+        stData.rAge         := TIME_TO_REAL(TIME() - tSent);
+    ELSE
+        stData.eValue       := E_AlpacaCoverState.UNKNOWN;
+        stData.nValue       := stData.eValue;
+        stData.sValue       := TO_STRING(stData.eValue);
+        stData.eStatusCode  := E_AlpacaStatusCode.ERROR_WRONG_CONVERSION;
+	END_IF
+ELSE
+    stData.eValue       := E_AlpacaCoverState.UNKNOWN;
+    stData.nValue       := stData.eValue;
+    stData.sValue       := TO_STRING(stData.eValue);
+    stData.eStatusCode := E_AlpacaStatusCode.ERROR_WRONG_RESPONSE_MEMBER;
+END_IF
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_FetchResultLreal" Id="{b3fa729c-4e24-4a4a-9889-2ce58bdc11e4}">
+      <Declaration><![CDATA[METHOD M_FetchResultLreal : LREAL
+VAR_INPUT
+END_VAR
+VAR_IN_OUT
+    stData : ST_AlpacaGetLreal;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF fbJson.HasMember(jsonDoc, 'Value') THEN
+    jsonVal:= fbJson.FindMember(jsonDoc, 'Value');
+    IF fbJson.IsDouble(jsonVal) THEN
+        stData.lrValue      := fbJson.GetDouble(jsonVal);
+        stData.eStatusCode  := E_AlpacaStatusCode.OK;
+        stData.rAge         := TIME_TO_REAL(TIME() - tSent);
+    ELSIF fbJson.IsInt(jsonVal) THEN
+        stData.lrValue      := DINT_TO_LREAL(fbJson.GetInt(jsonVal));
+        stData.eStatusCode  := E_AlpacaStatusCode.OK;
+        stData.rAge         := TIME_TO_REAL(TIME() - tSent);
+    ELSE
+        stData.lrValue      := 0.0;
+        stData.eStatusCode  := E_AlpacaStatusCode.ERROR_WRONG_CONVERSION;
+	END_IF
+ELSE
+    stData.lrValue          := 0.0;
+    stData.eStatusCode      := E_AlpacaStatusCode.ERROR_WRONG_RESPONSE_MEMBER;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <LineIds Name="FB_AlpacaGet">
+      <LineId Id="116" Count="0" />
+      <LineId Id="29" Count="0" />
+      <LineId Id="36" Count="0" />
+      <LineId Id="117" Count="0" />
+      <LineId Id="40" Count="0" />
+      <LineId Id="46" Count="3" />
+      <LineId Id="55" Count="0" />
+      <LineId Id="57" Count="0" />
+      <LineId Id="60" Count="1" />
+      <LineId Id="58" Count="0" />
+      <LineId Id="120" Count="0" />
+      <LineId Id="127" Count="0" />
+      <LineId Id="64" Count="0" />
+      <LineId Id="43" Count="0" />
+      <LineId Id="118" Count="0" />
+      <LineId Id="44" Count="0" />
+      <LineId Id="65" Count="0" />
+      <LineId Id="67" Count="3" />
+      <LineId Id="75" Count="0" />
+      <LineId Id="77" Count="0" />
+      <LineId Id="79" Count="0" />
+      <LineId Id="121" Count="0" />
+      <LineId Id="81" Count="0" />
+      <LineId Id="89" Count="1" />
+      <LineId Id="122" Count="0" />
+      <LineId Id="82" Count="0" />
+      <LineId Id="87" Count="1" />
+      <LineId Id="124" Count="0" />
+      <LineId Id="73" Count="1" />
+      <LineId Id="72" Count="0" />
+      <LineId Id="71" Count="0" />
+      <LineId Id="66" Count="0" />
+      <LineId Id="24" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_AlpacaGet.FB_init">
+      <LineId Id="7" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_AlpacaGet.M_FetchResultBool">
+      <LineId Id="6" Count="0" />
+      <LineId Id="8" Count="0" />
+      <LineId Id="10" Count="1" />
+      <LineId Id="23" Count="0" />
+      <LineId Id="54" Count="1" />
+      <LineId Id="61" Count="2" />
+      <LineId Id="65" Count="1" />
+      <LineId Id="68" Count="2" />
+      <LineId Id="67" Count="0" />
+      <LineId Id="73" Count="1" />
+      <LineId Id="71" Count="0" />
+      <LineId Id="64" Count="0" />
+      <LineId Id="24" Count="1" />
+      <LineId Id="13" Count="0" />
+      <LineId Id="12" Count="0" />
+      <LineId Id="26" Count="1" />
+      <LineId Id="15" Count="0" />
+      <LineId Id="5" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_AlpacaGet.M_FetchResultCoverState">
+      <LineId Id="6" Count="0" />
+      <LineId Id="8" Count="0" />
+      <LineId Id="55" Count="0" />
+      <LineId Id="94" Count="0" />
+      <LineId Id="111" Count="0" />
+      <LineId Id="110" Count="0" />
+      <LineId Id="65" Count="0" />
+      <LineId Id="64" Count="0" />
+      <LineId Id="24" Count="0" />
+      <LineId Id="104" Count="0" />
+      <LineId Id="109" Count="0" />
+      <LineId Id="96" Count="0" />
+      <LineId Id="13" Count="0" />
+      <LineId Id="12" Count="0" />
+      <LineId Id="97" Count="0" />
+      <LineId Id="106" Count="0" />
+      <LineId Id="108" Count="0" />
+      <LineId Id="26" Count="0" />
+      <LineId Id="15" Count="0" />
+      <LineId Id="100" Count="0" />
+      <LineId Id="5" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_AlpacaGet.M_FetchResultLreal">
+      <LineId Id="20" Count="4" />
+      <LineId Id="48" Count="0" />
+      <LineId Id="32" Count="0" />
+      <LineId Id="34" Count="1" />
+      <LineId Id="56" Count="0" />
+      <LineId Id="25" Count="6" />
+      <LineId Id="5" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

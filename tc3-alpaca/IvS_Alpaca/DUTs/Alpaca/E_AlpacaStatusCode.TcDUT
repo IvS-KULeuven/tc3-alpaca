@@ -1,0 +1,20 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <DUT Name="E_AlpacaStatusCode" Id="{2b4a37e7-3c79-4e73-84c9-9f04c09da6aa}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+{attribute 'strict'}
+TYPE E_AlpacaStatusCode :
+(
+    NOTSET                          := 0,
+	OK                              := 1,
+    ERROR                           := 2,
+    ERROR_WRONG_CONVERSION          := 3,
+    ERROR_WRONG_RESPONSE_MEMBER     := 4,
+    ERROR_WRONG_RESPONSE_CONTENT    := 5,
+    ERROR_WRONG_HTTP_STATUS_CODE    := 6,
+    ERROR_OTHER_COMMAND_SCHEDULED   := 7
+);
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

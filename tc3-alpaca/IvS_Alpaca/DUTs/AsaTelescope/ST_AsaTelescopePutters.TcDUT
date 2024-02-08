@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <DUT Name="ST_AsaTelescopePutters" Id="{a8ebca10-7726-4f44-acc9-dec8a5657f01}">
+    <Declaration><![CDATA[TYPE ST_AsaTelescopePutters :
+STRUCT
+    stAbortSlew   : ST_AlpacaPutNoArgs              := (sName := 'Abort slew');
+    stSlewToAltAz : ST_AlpacaPutSlewToAltAz         := (sName := 'Slew to Alt Az');
+    stSlewToCoo   : ST_AlpacaPutSlewToCoordinates   := (sName := 'Slew to coordinates');
+    stOpenCover   : ST_AlpacaPutNoArgs              := (sName := 'Open cover');
+    stCloseCover  : ST_AlpacaPutNoArgs              := (sName := 'Close cover');
+    stTracking    : ST_AlpacaPutTracking            := (sName := 'Tracking');
+    stM2Move      : ST_AlpacaPutMove                := (sName := 'M2 move');
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

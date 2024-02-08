@@ -1,0 +1,16 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <DUT Name="ST_AlpacaPutRequest" Id="{9f4ff155-b2e2-4903-9ab5-7a86940ab26c}">
+    <Declaration><![CDATA[// Common base class for the "Put" requests
+TYPE ST_AlpacaPutRequest :
+STRUCT
+    sName           : STRING;
+    bExecute        : BOOL;
+    eStatusCode     : E_AlpacaStatusCode;
+    nErrorCode      : DINT;
+    sErrorMessage   : STRING;
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

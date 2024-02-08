@@ -1,0 +1,21 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="MAIN" Id="{e547a803-3a78-4e51-83ae-77d801307806}" SpecialFunc="None">
+    <Declaration><![CDATA[PROGRAM MAIN
+VAR
+    {attribute 'OPC.UA.DA':='1'}
+    fbTelescope : FB_AsaTelescope( 
+          // sTelHost := '10.33.179.130', nTelPort := 11111, sAccHost := 'localhost', nAccPort := 11112); // Leuven
+             sTelHost := 'localhost', nTelPort := 32323, sAccHost := 'localhost', nAccPort := 32323); // Simulator
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[fbTelescope();
+]]></ST>
+    </Implementation>
+    <LineIds Name="MAIN">
+      <LineId Id="2" Count="0" />
+      <LineId Id="9" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

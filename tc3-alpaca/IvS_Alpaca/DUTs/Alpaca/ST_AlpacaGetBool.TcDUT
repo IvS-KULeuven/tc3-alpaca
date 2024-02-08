@@ -1,0 +1,11 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <DUT Name="ST_AlpacaGetBool" Id="{98fb799b-ccad-4bfc-a56f-9661cd00437a}">
+    <Declaration><![CDATA[TYPE ST_AlpacaGetBool EXTENDS ST_AlpacaGetRequest:
+STRUCT
+    bValue : BOOL;
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

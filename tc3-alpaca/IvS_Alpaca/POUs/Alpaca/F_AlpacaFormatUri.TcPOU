@@ -1,0 +1,25 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="F_AlpacaFormatUri" Id="{8b2c565c-6e6e-40bd-99d2-d58fa09683cc}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION F_AlpacaFormatUri : STRING
+VAR_INPUT
+    sDeviceName     : STRING;
+    nDeviceNumber   : UINT;
+    sVariableName   : STRING;
+END_VAR
+VAR
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[F_AlpacaFormatUri := CONCAT('/api/v1/',
+                     CONCAT(sDeviceName,
+                     CONCAT('/',
+                     CONCAT(UINT_TO_STRING(nDeviceNumber),
+                     CONCAT('/', sVariableName)))));]]></ST>
+    </Implementation>
+    <LineIds Name="F_AlpacaFormatUri">
+      <LineId Id="25" Count="0" />
+      <LineId Id="34" Count="3" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

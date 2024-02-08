@@ -1,0 +1,12 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <DUT Name="ST_AlpacaPutTracking" Id="{71d63ce9-e920-41d9-852d-6dfb8f33f4ff}">
+    <Declaration><![CDATA[TYPE ST_AlpacaPutTracking EXTENDS ST_AlpacaPutRequest:
+STRUCT
+    // inputs
+    i_bTracking : BOOL;
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

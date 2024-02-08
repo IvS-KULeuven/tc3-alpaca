@@ -1,0 +1,19 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <DUT Name="ST_AsaTelescopeGetters" Id="{93b86d0c-822f-4a19-acb0-e144f4499050}">
+    <Declaration><![CDATA[TYPE ST_AsaTelescopeGetters :
+STRUCT
+    stRightAscension          : ST_AlpacaGetLreal      := (sName := 'Right Ascension');
+    stDeclination             : ST_AlpacaGetLreal      := (sName := 'Declination');
+    stAzimuth                 : ST_AlpacaGetLreal      := (sName := 'Azimuth');
+    stAltitude                : ST_AlpacaGetLreal      := (sName := 'Altitude');
+    stSlewing                 : ST_AlpacaGetBool       := (sName := 'Slewing');
+    stTargetRightAscension    : ST_AlpacaGetLreal      := (sName := 'Target Right Ascension');
+    stTargetDeclination       : ST_AlpacaGetLreal      := (sName := 'Target Declination');
+    stM2Position              : ST_AlpacaGetLreal      := (sName := 'M2 position');
+    stCoverState              : ST_AlpacaGetCoverState := (sName := 'Cover state');
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

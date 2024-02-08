@@ -1,0 +1,765 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <POU Name="FB_AsaTelescope" Id="{73498ba1-1e18-4541-a420-8eddf2a82312}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK FB_AsaTelescope
+VAR_INPUT
+    {attribute 'OPC.UA.DA':='0'}
+    sTelHost            : STRING;           // Telescope hostname or IP address
+    {attribute 'OPC.UA.DA':='0'}
+    nTelPort            : UINT;             // Telescope port
+    {attribute 'OPC.UA.DA':='0'}
+    sAccHost            : STRING;           // Accessory hostname or IP address
+    {attribute 'OPC.UA.DA':='0'}
+    nAccPort            : UINT;             // Accessory port
+    {attribute 'OPC.UA.DA':='0'}
+    nLoopTime           : UINT   := 1000;   // Minimum loop time in ms (so we will wait if the loop is finished earlier)
+END_VAR
+VAR_OUTPUT
+    {attribute 'OPC.UA.DA' := '1'}
+    stData              : ST_AsaTelescopeGetters;
+    {attribute 'OPC.UA.DA' := '1'}
+    stCommands          : ST_AsaTelescopePutters;
+    {attribute 'OPC.UA.DA' := '1'}
+    bTelConnected       : BOOL;
+    {attribute 'OPC.UA.DA' := '1'}
+    bAccConnected       : BOOL;
+END_VAR
+VAR
+    // store the HTTP client parameters that are really used
+    {attribute 'OPC.UA.DA':='0'}
+    sTrueTelHost        : STRING;
+    {attribute 'OPC.UA.DA':='0'}
+    sTrueAccHost        : STRING;
+    {attribute 'OPC.UA.DA':='0'}
+    nTrueTelPort        : UINT;
+    {attribute 'OPC.UA.DA':='0'}
+    nTrueAccPort        : UINT;
+    {attribute 'OPC.UA.DA':='0'}
+    bResetTel           : BOOL;
+    {attribute 'OPC.UA.DA':='0'}
+    bResetAcc           : BOOL;
+
+    // keep track of the current state and the next state
+    // - getters (fbGet...) will be read in order of E_AlpacaRequest
+    // - putters (fbPut...) can be "scheduled" by setting eNextState to the requested command.
+    //   As soon as the current request is finished, the CASE OF will therefore jump
+    //   to the new command
+    {attribute 'OPC.UA.DA':='0'}
+    eState              : E_AsaTelescopeRequests;
+    {attribute 'OPC.UA.DA':='0'}
+    eNextState          : E_AsaTelescopeRequests := E_AsaTelescopeRequests.NO_COMMAND;
+    
+    // create the 2 necessary clients for the telescope
+    {attribute 'OPC.UA.DA':='0'}
+    fbClientTel         : FB_IotHttpClient;
+    {attribute 'OPC.UA.DA':='0'}
+    fbClientAcc         : FB_IotHttpClient;
+    
+    // data (read)
+    {attribute 'OPC.UA.DA':='0'}
+    fbGetTelRA          : FB_AlpacaGet('telescope', 0, 'rightascension');
+    {attribute 'OPC.UA.DA':='0'}
+    fbGetTelDec         : FB_AlpacaGet('telescope', 0, 'declination');
+    {attribute 'OPC.UA.DA':='0'}
+    fbGetTelAz          : FB_AlpacaGet('telescope', 0, 'azimuth');
+    {attribute 'OPC.UA.DA':='0'}
+    fbGetTelAlt         : FB_AlpacaGet('telescope', 0, 'altitude');
+    {attribute 'OPC.UA.DA':='0'}
+    fbGetTelSlew        : FB_AlpacaGet('telescope', 0, 'slewing');
+    {attribute 'OPC.UA.DA':='0'}
+    fbGetTelTRA         : FB_AlpacaGet('telescope', 0, 'targetrightascension');
+    {attribute 'OPC.UA.DA':='0'}
+    fbGetTelTDec        : FB_AlpacaGet('telescope', 0, 'targetdeclination');
+    {attribute 'OPC.UA.DA':='0'}
+    fbGetFocPos         : FB_AlpacaGet('focuser', 0, 'position');
+    {attribute 'OPC.UA.DA':='0'}
+    fbGetCovState       : FB_AlpacaGet('covercalibrator', 0, 'coverstate');
+    
+    // commands (write)
+    {attribute 'OPC.UA.DA':='0'}
+    fbPutTelAbortSlew   : FB_AlpacaPut('telescope', 0, 'abortslew');
+    {attribute 'OPC.UA.DA':='0'}
+    fbPutTelSlewAltAz   : FB_AlpacaPut('telescope', 0, 'slewtoaltazasync');
+    {attribute 'OPC.UA.DA':='0'}
+    fbPutTelSlewCoo     : FB_AlpacaPut('telescope', 0, 'slewtocoordinatesasync');
+    {attribute 'OPC.UA.DA':='0'}
+    fbPutCovOpen        : FB_AlpacaPut('covercalibrator', 0, 'opencover');
+    {attribute 'OPC.UA.DA':='0'}
+    fbPutCovClose       : FB_AlpacaPut('covercalibrator', 0, 'closecover');
+    {attribute 'OPC.UA.DA':='0'}
+    fbPutTelTracking    : FB_AlpacaPut('telescope', 0, 'tracking');
+    {attribute 'OPC.UA.DA':='0'}
+    fbPutFocMove        : FB_AlpacaPut('focuser', 0, 'move');
+    
+    // cycle time variables
+    {attribute 'OPC.UA.DA':='0'}
+    tStart              : TIME;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[IF sTrueTelHost <> sTelHost OR nTrueTelPort <> nTelPort THEN
+    bResetTel := TRUE;
+END_IF
+IF sTrueAccHost <> sAccHost OR nTrueAccPort <> nAccPort THEN
+    bResetAcc := TRUE;
+END_IF
+
+IF bResetTel THEN
+    fbClientTel.Disconnect();
+    sTrueTelHost := sTelHost;
+    nTrueTelPort := nTelPort;
+    
+    IF NOT fbClientTel.bConfigured THEN 	
+        fbClientTel.sHostName := sTrueTelHost;
+        fbClientTel.nHostPort := nTrueTelPort;
+        fbClientTel.bKeepAlive := TRUE;
+        fbClientTel.tConnectionTimeout := T#3s;
+        fbClientTel.stTLS.bNoServerCertCheck := FALSE;
+        bResetTel := FALSE;
+        fbClientTel.Execute();
+    END_IF
+ELSE
+    fbClientTel.Execute();
+END_IF
+
+
+IF bResetAcc THEN
+    fbClientAcc.Disconnect();
+    sTrueAccHost := sAccHost;
+    nTrueAccPort := nAccPort;
+    
+    IF NOT fbClientAcc.bConfigured THEN 	
+        fbClientAcc.sHostName := sTrueAccHost;
+        fbClientAcc.nHostPort := nTrueAccPort;
+        fbClientAcc.bKeepAlive := TRUE;
+        fbClientAcc.tConnectionTimeout := T#3s;
+        fbClientAcc.stTLS.bNoServerCertCheck := FALSE;
+        bResetAcc := FALSE;
+        fbClientAcc.Execute();
+    END_IF
+ELSE
+    fbClientAcc.Execute();
+END_IF
+
+bTelConnected := fbClientTel.bConnected;
+bAccConnected := fbClientAcc.bConnected;
+
+eNextState := M_GetNextCommand();
+
+CASE eState OF
+    E_AsaTelescopeRequests.RIGHT_ASCENSION:
+        tStart := TIME();
+        M_ReadLreal(fbClientTel, fbGetTelRA   , stData.stRightAscension);
+    E_AsaTelescopeRequests.DECLINATION:
+        M_ReadLreal(fbClientTel, fbGetTelDec  , stData.stDeclination);
+    E_AsaTelescopeRequests.AZIMUTH:
+        M_ReadLreal(fbClientTel, fbGetTelAz   , stData.stAzimuth);
+    E_AsaTelescopeRequests.ALTITUDE:
+        M_ReadLreal(fbClientTel, fbGetTelAlt  , stData.stAltitude);
+    E_AsaTelescopeRequests.SLEWING:
+        M_ReadBool(fbClientTel, fbGetTelSlew  , stData.stSlewing);
+    E_AsaTelescopeRequests.TARGET_RIGHT_ASCENSION:
+        M_ReadLreal(fbClientTel, fbGetTelTRA  , stData.stTargetRightAscension);
+    E_AsaTelescopeRequests.TARGET_DECLINATION:
+        M_ReadLreal(fbClientTel, fbGetTelTDec , stData.stTargetDeclination);
+    E_AsaTelescopeRequests.M2_POSITION:
+        M_ReadLreal(fbClientAcc, fbGetFocPos , stData.stM2Position);
+    E_AsaTelescopeRequests.COVER_STATE:
+        M_ReadCoverState(fbClientAcc, fbGetCovState , stData.stCoverState);
+    // Special state, used to wait for the next loop
+    E_AsaTelescopeRequests.NO_COMMAND:
+        M_UpdateState();
+    // Commands
+    E_AsaTelescopeRequests.ABORT_SLEW:
+        M_WriteNoArgs(fbClientTel, fbPutTelAbortSlew , stCommands.stAbortSlew);
+    E_AsaTelescopeRequests.SLEW_TO_ALTAZ:
+        M_WriteSlewToAltAz(fbClientTel, fbPutTelSlewAltAz , stCommands.stSlewToAltAz);
+    E_AsaTelescopeRequests.SLEW_TO_COORDINATES:
+        M_WriteSlewToCoordinates(fbClientTel, fbPutTelSlewCoo , stCommands.stSlewToCoo);
+    E_AsaTelescopeRequests.OPEN_COVER:
+        M_WriteNoArgs(fbClientAcc, fbPutCovOpen , stCommands.stOpenCover);
+    E_AsaTelescopeRequests.CLOSE_COVER:
+        M_WriteNoArgs(fbClientAcc, fbPutCovClose , stCommands.stCloseCover);
+    E_AsaTelescopeRequests.TRACKING:
+        M_WriteTracking(fbClientTel, fbPutTelTracking , stCommands.stTracking);
+    E_AsaTelescopeRequests.M2_MOVE:
+        M_WriteMove(fbClientAcc, fbPutFocMove , stCommands.stM2Move);
+    ELSE
+        // this should never happen, but to be sure let's restart
+        eState := E_AsaTelescopeRequests.RIGHT_ASCENSION;
+END_CASE
+]]></ST>
+    </Implementation>
+    <Method Name="FB_init" Id="{08e24dbb-f3eb-43ec-9f0a-f40e5e19576c}">
+      <Declaration><![CDATA[METHOD FB_init : BOOL
+VAR_INPUT
+	bInitRetains : BOOL; // if TRUE, the retain variables are initialized (warm start / cold start)
+	bInCopyCode : BOOL;  // if TRUE, the instance afterwards gets moved into the copy code (online change)
+    sTelHost            : STRING    := 'localhost'; // Telescope hostname or IP address
+    nTelPort            : UINT      := 11111;       // Telescope port
+    sAccHost            : STRING    := 'localhost'; // Accessory hostname or IP address
+    nAccPort            : UINT      := 11112;       // Accessory port
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[THIS^.sTelHost := sTelHost;
+THIS^.nTelPort := nTelPort;
+THIS^.sAccHost := sAccHost;
+THIS^.nAccPort := nAccPort;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_GetAge" Id="{44bf847d-d6f3-4122-a2f5-36c1708cfe3c}">
+      <Declaration><![CDATA[METHOD M_GetAge : REAL
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[M_GetAge := TIME_TO_REAL(TIME() - tStart) / 1000.0;]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_GetNextCommand" Id="{7d028cdf-9adc-42f3-ba24-77c8633b4f02}">
+      <Declaration><![CDATA[METHOD M_GetNextCommand : E_AsaTelescopeRequests
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF stCommands.stAbortSlew.bExecute THEN
+    M_GetNextCommand := E_AsaTelescopeRequests.ABORT_SLEW;
+ELSIF stCommands.stCloseCover.bExecute THEN
+    M_GetNextCommand := E_AsaTelescopeRequests.CLOSE_COVER;
+ELSIF stCommands.stOpenCover.bExecute THEN
+    M_GetNextCommand := E_AsaTelescopeRequests.OPEN_COVER;
+ELSIF stCommands.stSlewToAltAz.bExecute THEN
+    M_GetNextCommand := E_AsaTelescopeRequests.SLEW_TO_ALTAZ;
+ELSIF stCommands.stSlewToCoo.bExecute THEN
+    M_GetNextCommand := E_AsaTelescopeRequests.SLEW_TO_COORDINATES;
+ELSIF stCommands.stTracking.bExecute THEN
+    M_GetNextCommand := E_AsaTelescopeRequests.TRACKING;
+ELSIF stCommands.stM2Move.bExecute THEN
+    M_GetNextCommand := E_AsaTelescopeRequests.M2_MOVE;
+ELSE
+    M_GetNextCommand := E_AsaTelescopeRequests.NO_COMMAND;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_ReadBool" Id="{a6e1d487-48c9-4842-b2c6-c8e082ad7394}">
+      <Declaration><![CDATA[METHOD M_ReadBool : BOOL
+VAR_INPUT
+END_VAR
+VAR_IN_OUT
+    fbClient : FB_IotHttpClient;
+    fbRequest : FB_AlpacaGet;
+    Data : ST_AlpacaGetBool;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[fbRequest(fbClient := fbClient); 
+
+IF NOT fbRequest.bBusy THEN
+    IF fbRequest.bError THEN
+        // let's update only the statuscode, and leave the rest as is
+        Data.eStatusCode := E_AlpacaStatusCode.ERROR; 
+    ELSE
+        fbRequest.M_FetchResultBool(Data);
+	END_IF
+    Data.rAge := M_GetAge();
+    M_UpdateState();
+END_IF
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_ReadCoverState" Id="{4f40dc26-92a8-45f6-afa4-0d1518cc5df7}">
+      <Declaration><![CDATA[METHOD M_ReadCoverState : BOOL
+VAR_INPUT
+END_VAR
+VAR_IN_OUT
+    fbClient : FB_IotHttpClient;
+    fbRequest : FB_AlpacaGet;
+    Data : ST_AlpacaGetCoverState;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[fbRequest(fbClient := fbClient); 
+
+IF NOT fbRequest.bBusy THEN
+    IF fbRequest.bError THEN
+        // let's update only the statuscode, and leave the rest as is
+        Data.eStatusCode := E_AlpacaStatusCode.ERROR; 
+    ELSE
+        fbRequest.M_FetchResultCoverState(Data);
+	END_IF
+    Data.rAge := M_GetAge();
+    M_UpdateState();
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_ReadLreal" Id="{579ed436-5a78-4cc5-84da-e6bad3a123fc}">
+      <Declaration><![CDATA[METHOD M_ReadLreal : BOOL
+VAR_INPUT
+END_VAR
+VAR_IN_OUT
+    fbClient : FB_IotHttpClient;
+    fbRequest : FB_AlpacaGet;
+    Data : ST_AlpacaGetLreal;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[fbRequest(fbClient := fbClient); 
+
+IF NOT fbRequest.bBusy THEN
+    IF fbRequest.bError THEN
+        // let's update only the statuscode, and leave the rest as is
+        Data.eStatusCode := E_AlpacaStatusCode.ERROR; 
+    ELSE
+        fbRequest.M_FetchResultLreal(Data);
+	END_IF
+    Data.rAge := M_GetAge();
+    M_UpdateState();
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_ScheduleRpcCall" Id="{1b48ca47-1231-43c4-8704-fbf1b3d0b06d}">
+      <Declaration><![CDATA[METHOD M_ScheduleRpcCall : E_AlpacaStatusCode
+VAR_INPUT
+    eCheck : E_AsaTelescopeRequests; 
+END_VAR
+VAR_IN_OUT
+    tPut : ST_AlpacaPutRequest; 
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[tPut.bExecute := TRUE;
+
+// check if our command is really scheduled
+// (which means: check if no other command was scheduled instead)
+IF M_GetNextCommand() = eCheck THEN
+    M_ScheduleRpcCall := E_AlpacaStatusCode.OK;
+ELSE
+    M_ScheduleRpcCall := E_AlpacaStatusCode.ERROR_OTHER_COMMAND_SCHEDULED;
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_UpdateState" Id="{afd89aa3-c8ff-4656-8506-dd1b72e9496e}">
+      <Declaration><![CDATA[METHOD M_UpdateState : BOOL
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF eNextState > E_AsaTelescopeRequests.NO_COMMAND THEN
+    // command scheduled!
+    eState := eNextState;
+    eNextState := E_AsaTelescopeRequests.NO_COMMAND;
+ELSE
+    IF eState = E_AsaTelescopeRequests.NO_COMMAND THEN
+        IF TIME() > tStart + UINT_TO_TIME(nLoopTime) THEN
+            eState := 0;
+        END_IF 
+	ELSIF eState < E_AsaTelescopeRequests.NO_COMMAND THEN
+        eState := eState + 1;
+    ELSE
+        eState := 0;
+    END_IF
+END_IF
+]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_WriteMove" Id="{02be2f6d-0f9c-4062-aa8e-e28f4e4b6fcd}">
+      <Declaration><![CDATA[METHOD M_WriteMove : BOOL
+VAR_INPUT
+END_VAR
+VAR_IN_OUT
+    fbClient    : FB_IotHttpClient;
+    fbPut       : FB_AlpacaPut;
+    tRequest    : ST_AlpacaPutMove;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF NOT fbPut.bBusy THEN
+    fbPut.sArguments := CONCAT('Position=', DINT_TO_STRING(tRequest.i_Position));
+END_IF
+
+fbPut(fbClient := fbClient); 
+
+IF NOT fbPut.bBusy THEN
+    IF fbPut.bError THEN
+        // let's update only the statuscode, and leave the rest as is
+        tRequest.eStatusCode := E_AlpacaStatusCode.ERROR; 
+    ELSE
+        fbPut.M_FetchResult(tRequest);
+	END_IF
+    tRequest.bExecute := FALSE;
+    M_UpdateState();
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_WriteNoArgs" Id="{114df78c-99e1-4cc0-a4e2-807cc53046a8}">
+      <Declaration><![CDATA[METHOD M_WriteNoArgs : BOOL
+VAR_INPUT
+END_VAR
+VAR_IN_OUT
+    fbClient    : FB_IotHttpClient;
+    fbPut       : FB_AlpacaPut;
+    tRequest    : ST_AlpacaPutRequest;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[fbPut(fbClient := fbClient); 
+
+IF NOT fbPut.bBusy THEN
+    IF fbPut.bError THEN
+        // let's update only the statuscode, and leave the rest as is
+        tRequest.eStatusCode := E_AlpacaStatusCode.ERROR; 
+    ELSE
+        fbPut.M_FetchResult(tRequest);
+	END_IF
+    tRequest.bExecute := FALSE;
+    M_UpdateState();
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_WriteSlewToAltAz" Id="{9ab3d82c-fcbb-412d-97c4-d074938c36d0}">
+      <Declaration><![CDATA[METHOD M_WriteSlewToAltAz : BOOL
+VAR_INPUT
+END_VAR
+VAR_IN_OUT
+    fbClient    : FB_IotHttpClient;
+    fbPut       : FB_AlpacaPut;
+    tRequest    : ST_AlpacaPutSlewToAltAz;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF NOT fbPut.bBusy THEN
+    fbPut.sArguments := CONCAT('Azimuth=',
+                       CONCAT(LREAL_TO_STRING(tRequest.i_lrAzimuth),
+                       CONCAT('&Altitude=', 
+                              LREAL_TO_STRING(tRequest.i_lrAltitude))));
+END_IF
+
+fbPut(fbClient := fbClient); 
+
+IF NOT fbPut.bBusy THEN
+    IF fbPut.bError THEN
+        // let's update only the statuscode, and leave the rest as is
+        tRequest.eStatusCode := E_AlpacaStatusCode.ERROR; 
+    ELSE
+        fbPut.M_FetchResult(tRequest);
+	END_IF
+    tRequest.bExecute := FALSE;
+    M_UpdateState();
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_WriteSlewToCoordinates" Id="{d362bdf8-a8fc-4b1d-b925-ec37719c007b}">
+      <Declaration><![CDATA[METHOD M_WriteSlewToCoordinates : BOOL
+VAR_INPUT
+END_VAR
+VAR_IN_OUT
+    fbClient    : FB_IotHttpClient;
+    fbPut       : FB_AlpacaPut;
+    tRequest    : ST_AlpacaPutSlewToCoordinates;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF NOT fbPut.bBusy THEN
+    fbPut.sArguments := CONCAT('RightAscension=',
+                       CONCAT(LREAL_TO_STRING(tRequest.i_lrRightAscension),
+                       CONCAT('&Declination=', 
+                              LREAL_TO_STRING(tRequest.i_lrDeclination))));
+END_IF
+
+fbPut(fbClient := fbClient); 
+
+IF NOT fbPut.bBusy THEN
+    IF fbPut.bError THEN
+        // let's update only the statuscode, and leave the rest as is
+        tRequest.eStatusCode := E_AlpacaStatusCode.ERROR; 
+    ELSE
+        fbPut.M_FetchResult(tRequest);
+	END_IF
+    tRequest.bExecute := FALSE;
+    M_UpdateState();
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="M_WriteTracking" Id="{e090b950-835f-4238-935f-cdc4f7a46547}">
+      <Declaration><![CDATA[METHOD M_WriteTracking : BOOL
+VAR_INPUT
+END_VAR
+VAR_IN_OUT
+    fbClient    : FB_IotHttpClient;
+    fbPut       : FB_AlpacaPut;
+    tRequest    : ST_AlpacaPutTracking;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[IF NOT fbPut.bBusy THEN
+    IF tRequest.i_bTracking THEN
+        fbPut.sArguments := 'Tracking=true';
+    ELSE
+        fbPut.sArguments := 'Tracking=false';
+	END_IF
+END_IF
+
+fbPut(fbClient := fbClient); 
+
+IF NOT fbPut.bBusy THEN
+    IF fbPut.bError THEN
+        // let's update only the statuscode, and leave the rest as is
+        tRequest.eStatusCode := E_AlpacaStatusCode.ERROR; 
+    ELSE
+        fbPut.M_FetchResult(tRequest);
+	END_IF
+    tRequest.bExecute := FALSE;
+    M_UpdateState();
+END_IF]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RPC_AbortSlew" Id="{55abe12d-76a3-42ac-9e06-c082827c3d18}">
+      <Declaration><![CDATA[{attribute 'TcRpcEnable':='1'}
+METHOD RPC_AbortSlew : E_AlpacaStatusCode
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[RPC_AbortSlew := M_ScheduleRpcCall(
+    tPut    := stCommands.stAbortSlew, 
+    eCheck  := E_AsaTelescopeRequests.ABORT_SLEW);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RPC_CloseCover" Id="{d20faebb-1d5a-43a3-8d24-0a53431de216}">
+      <Declaration><![CDATA[{attribute 'TcRpcEnable':='1'}
+METHOD RPC_CloseCover : E_AlpacaStatusCode
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[RPC_CloseCover := M_ScheduleRpcCall(
+    tPut    := stCommands.stCloseCover, 
+    eCheck  := E_AsaTelescopeRequests.CLOSE_COVER);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RPC_M2Move" Id="{c952a96c-03f4-4970-9130-7da2e5efef12}">
+      <Declaration><![CDATA[{attribute 'TcRpcEnable':='1'}
+METHOD RPC_M2Move : E_AlpacaStatusCode
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[RPC_M2Move := M_ScheduleRpcCall(
+    tPut    := stCommands.stM2Move, 
+    eCheck  := E_AsaTelescopeRequests.M2_MOVE);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RPC_OpenCover" Id="{4b0eb903-8b2f-491a-9699-af1f8b762597}">
+      <Declaration><![CDATA[{attribute 'TcRpcEnable':='1'}
+METHOD RPC_OpenCover : E_AlpacaStatusCode
+VAR_INPUT
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[RPC_OpenCover := M_ScheduleRpcCall(
+    tPut    := stCommands.stOpenCover, 
+    eCheck  := E_AsaTelescopeRequests.OPEN_COVER);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RPC_SlewToAltAz" Id="{5e1d0a5a-f817-47c7-9ba5-9ab084f6f26e}">
+      <Declaration><![CDATA[{attribute 'TcRpcEnable':='1'}
+METHOD RPC_SlewToAltAz : E_AlpacaStatusCode
+VAR_INPUT
+    lrAltitude : LREAL;
+    lrAzimuth : LREAL;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[stCommands.stSlewToAltAz.i_lrAltitude := lrAltitude;
+stCommands.stSlewToAltAz.i_lrAzimuth  := lrAzimuth;
+
+RPC_SlewToAltAz := M_ScheduleRpcCall(
+    tPut    := stCommands.stSlewToAltAz, 
+    eCheck  := E_AsaTelescopeRequests.SLEW_TO_ALTAZ);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RPC_SlewToCoordinates" Id="{f57a4aa9-e53f-42f9-ad89-9e15a47ffd16}">
+      <Declaration><![CDATA[{attribute 'TcRpcEnable':='1'}
+METHOD RPC_SlewToCoordinates : E_AlpacaStatusCode
+VAR_INPUT
+    lrRightAscension : LREAL;
+    lrDeclination : LREAL;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[stCommands.stSlewToCoo.i_lrRightAscension    := lrRightAscension;
+stCommands.stSlewToCoo.i_lrDeclination       := lrDeclination;
+
+RPC_SlewToCoordinates := M_ScheduleRpcCall(
+    tPut    := stCommands.stSlewToCoo, 
+    eCheck  := E_AsaTelescopeRequests.SLEW_TO_COORDINATES);]]></ST>
+      </Implementation>
+    </Method>
+    <Method Name="RPC_Tracking" Id="{3bb3baeb-76d2-413e-8c52-8cd3633b5b59}">
+      <Declaration><![CDATA[{attribute 'TcRpcEnable':='1'}
+METHOD RPC_Tracking : E_AlpacaStatusCode
+VAR_INPUT
+    bTracking : BOOL;
+END_VAR
+]]></Declaration>
+      <Implementation>
+        <ST><![CDATA[stCommands.stTracking.i_bTracking := bTracking;
+
+RPC_Tracking := M_ScheduleRpcCall(
+    tPut    := stCommands.stTracking, 
+    eCheck  := E_AsaTelescopeRequests.TRACKING);]]></ST>
+      </Implementation>
+    </Method>
+    <LineIds Name="FB_AsaTelescope">
+      <LineId Id="4914" Count="90" />
+      <LineId Id="87" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.FB_init">
+      <LineId Id="7" Count="0" />
+      <LineId Id="12" Count="2" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.M_GetAge">
+      <LineId Id="5" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.M_GetNextCommand">
+      <LineId Id="5" Count="0" />
+      <LineId Id="9" Count="0" />
+      <LineId Id="31" Count="0" />
+      <LineId Id="30" Count="0" />
+      <LineId Id="11" Count="0" />
+      <LineId Id="13" Count="3" />
+      <LineId Id="23" Count="3" />
+      <LineId Id="18" Count="0" />
+      <LineId Id="20" Count="0" />
+      <LineId Id="22" Count="0" />
+      <LineId Id="19" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.M_ReadBool">
+      <LineId Id="40" Count="0" />
+      <LineId Id="20" Count="1" />
+      <LineId Id="42" Count="0" />
+      <LineId Id="46" Count="1" />
+      <LineId Id="50" Count="1" />
+      <LineId Id="33" Count="0" />
+      <LineId Id="74" Count="0" />
+      <LineId Id="53" Count="0" />
+      <LineId Id="5" Count="0" />
+      <LineId Id="65" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.M_ReadCoverState">
+      <LineId Id="40" Count="0" />
+      <LineId Id="20" Count="1" />
+      <LineId Id="42" Count="0" />
+      <LineId Id="46" Count="1" />
+      <LineId Id="50" Count="1" />
+      <LineId Id="33" Count="0" />
+      <LineId Id="63" Count="0" />
+      <LineId Id="53" Count="0" />
+      <LineId Id="5" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.M_ReadLreal">
+      <LineId Id="40" Count="0" />
+      <LineId Id="20" Count="1" />
+      <LineId Id="42" Count="0" />
+      <LineId Id="46" Count="1" />
+      <LineId Id="50" Count="1" />
+      <LineId Id="33" Count="0" />
+      <LineId Id="63" Count="0" />
+      <LineId Id="53" Count="0" />
+      <LineId Id="5" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.M_ScheduleRpcCall">
+      <LineId Id="27" Count="0" />
+      <LineId Id="29" Count="0" />
+      <LineId Id="28" Count="0" />
+      <LineId Id="30" Count="0" />
+      <LineId Id="23" Count="3" />
+      <LineId Id="10" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.M_UpdateState">
+      <LineId Id="18" Count="0" />
+      <LineId Id="31" Count="0" />
+      <LineId Id="19" Count="0" />
+      <LineId Id="21" Count="1" />
+      <LineId Id="35" Count="0" />
+      <LineId Id="38" Count="1" />
+      <LineId Id="36" Count="1" />
+      <LineId Id="23" Count="0" />
+      <LineId Id="26" Count="0" />
+      <LineId Id="30" Count="0" />
+      <LineId Id="29" Count="0" />
+      <LineId Id="20" Count="0" />
+      <LineId Id="8" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.M_WriteMove">
+      <LineId Id="94" Count="0" />
+      <LineId Id="122" Count="0" />
+      <LineId Id="99" Count="10" />
+      <LineId Id="111" Count="0" />
+      <LineId Id="110" Count="0" />
+      <LineId Id="18" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.M_WriteNoArgs">
+      <LineId Id="97" Count="10" />
+      <LineId Id="18" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.M_WriteSlewToAltAz">
+      <LineId Id="96" Count="17" />
+      <LineId Id="18" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.M_WriteSlewToCoordinates">
+      <LineId Id="94" Count="15" />
+      <LineId Id="111" Count="0" />
+      <LineId Id="110" Count="0" />
+      <LineId Id="18" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.M_WriteTracking">
+      <LineId Id="94" Count="0" />
+      <LineId Id="120" Count="0" />
+      <LineId Id="124" Count="1" />
+      <LineId Id="123" Count="0" />
+      <LineId Id="122" Count="0" />
+      <LineId Id="99" Count="10" />
+      <LineId Id="111" Count="0" />
+      <LineId Id="110" Count="0" />
+      <LineId Id="18" Count="0" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.RPC_AbortSlew">
+      <LineId Id="62" Count="0" />
+      <LineId Id="71" Count="1" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.RPC_CloseCover">
+      <LineId Id="62" Count="0" />
+      <LineId Id="67" Count="1" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.RPC_M2Move">
+      <LineId Id="62" Count="0" />
+      <LineId Id="67" Count="1" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.RPC_OpenCover">
+      <LineId Id="62" Count="0" />
+      <LineId Id="67" Count="1" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.RPC_SlewToAltAz">
+      <LineId Id="28" Count="0" />
+      <LineId Id="37" Count="0" />
+      <LineId Id="53" Count="0" />
+      <LineId Id="52" Count="0" />
+      <LineId Id="60" Count="1" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.RPC_SlewToCoordinates">
+      <LineId Id="28" Count="0" />
+      <LineId Id="5" Count="0" />
+      <LineId Id="54" Count="0" />
+      <LineId Id="53" Count="0" />
+      <LineId Id="61" Count="1" />
+    </LineIds>
+    <LineIds Name="FB_AsaTelescope.RPC_Tracking">
+      <LineId Id="28" Count="0" />
+      <LineId Id="54" Count="0" />
+      <LineId Id="53" Count="0" />
+      <LineId Id="60" Count="1" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

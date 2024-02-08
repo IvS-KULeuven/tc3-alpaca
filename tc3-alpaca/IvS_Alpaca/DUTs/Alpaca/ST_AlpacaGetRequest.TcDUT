@@ -1,0 +1,14 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <DUT Name="ST_AlpacaGetRequest" Id="{f724c27b-bc6b-400b-8f79-e57d55e14056}">
+    <Declaration><![CDATA[// Common base class for the "Get" requests
+TYPE ST_AlpacaGetRequest :
+STRUCT
+    sName       : STRING;
+    eStatusCode : E_AlpacaStatusCode;
+    rAge        : REAL;                 // age of the last reading, in seconds, since the last loop start
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

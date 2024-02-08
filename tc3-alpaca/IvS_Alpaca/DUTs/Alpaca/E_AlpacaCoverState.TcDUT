@@ -1,0 +1,18 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.12">
+  <DUT Name="E_AlpacaCoverState" Id="{885fd405-b7ce-494f-9949-5553d54adb11}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+{attribute 'to_string'}
+TYPE E_AlpacaCoverState :
+(
+	NOT_PRESENT := 0,
+    CLOSED      := 1,
+    MOVING      := 2,
+    OPEN        := 3,
+    UNKNOWN     := 4,
+    ERROR       := 5
+) DINT := UNKNOWN;
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>
